@@ -266,10 +266,10 @@ def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, b: np.array, 
     :return DeltaW: subset of elements of DeltaL corresponding to the diffusion part only, (d, M) np.array with M <= N
             DeltaQ_W: time increments corresponding to the elements in DeltaW, (M,) np.array
     """
-    # identify critical region x^T Sigma x <= beta*2*Delta*log(N)
+    # identify critical region x^T Sigma_inv x <= beta*2*Delta*log(N)
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
-    subset = np.einsum('ji,ki->i', Sigma.dot(DeltaL), DeltaL) < 2*gamma*DeltaQ*np.log(N)
+    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaL), DeltaL) < 2*gamma*DeltaQ*np.log(N)
     # return Brownian increments
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaL[:, subset] - np.outer(b, DeltaQ_W)
@@ -334,5 +334,5 @@ def choose_nu(DeltaL: np.array, Q: np.array, b: np.array, epsilon: float = 0.01,
     """
     DeltaQ = np.diff(Q)
     Sigma_hat = estimate_Sigma_L(DeltaL, Q, b, epsilon, gamma)
-    nu = np.sqrt(DeltaQ * 2 * gamma * np.log(len(DeltaQ)) / Sigma_hat)
+    nu = np.sqrt(DeltaQ * 2 * gamma * np.log(len(DeltaQ)) * Sigma_hat)
     return nu
