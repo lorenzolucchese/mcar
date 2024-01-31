@@ -140,13 +140,13 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
     X[:, 0] = x0
 
     # simulate driving Brownian noise
-    delta_W = np.sqrt(np.diff(P))[np.newaxis, :]*scipy.stats.multivariate_normal(cov=Sigma).rvs(size=N-1).T
+    delta_W = np.sqrt(np.diff(P))[np.newaxis, :] * scipy.stats.multivariate_normal(cov=Sigma).rvs(size=N-1).T
     delta_L = np.zeros((d, N-1))
 
     if uniform:
         delta_t = P[1] - P[0]
         delta_jump_L = jumps(delta_t, N-1)
-        delta_L = delta_W + delta_jump_L
+        delta_L = b.reshape(-1, 1) * delta_t + delta_W + delta_jump_L
         jump_L[:, 1:] = delta_jump_L.cumsum(axis=1)
 
         # get Levy process
@@ -157,7 +157,7 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
             
             # Levy increment (continuous and jump parts)
             delta_jump_L = jumps(delta_t, 1).reshape(-1, 1)
-            delta_L[:, n] = delta_W[:, n] + delta_jump_L
+            delta_L[:, n] = b.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
             
             # evolve the processes
             jump_L[:, n + 1] = jump_L[:, n] + delta_jump_L
