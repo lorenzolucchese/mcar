@@ -1,5 +1,6 @@
 # TODO: write as class
 import numpy as np
+from typing import Callable
 
 # State space representation from observation
 def state_space(Y: np.array, p: int, P: np.array) -> np.array:
@@ -17,14 +18,13 @@ def state_space(Y: np.array, p: int, P: np.array) -> np.array:
     X[:d, :] = Y
     # differentiate p-1 times to get state space representation
     for i in range(1, p):
-        X[d*i:d*(i+1), :-1] = np.diff(X[d*(i-1):d*i, :], axis=1)/(P[1:] - P[:-1])
+        X[d*i:d*(i+1), :-1] = np.diff(X[d*(i-1):d*i, :], axis=1) / (P[1:] - P[:-1])
     return X
 
 # Estimate MCAR parameter AA
-def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, with_cov: bool = False, Sigma: np.array = None, mu: np.array = None) -> np.array:
+def estimate_MCAR_drift(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, with_cov: bool = False, Sigma: np.array = None, mu: np.array = None) -> np.array:
     """
-    Estimate MCAR parameters from the state space realisation of a GrCAR model.
-    with triplet (b, Sigma, rate*jump_F).
+    Estimate MCAR drift parameters from the realisation of a MCAR process with driving Levy triplet (b, Sigma, F).
     :param Y: MCAR process observation, (d, N+1) np.array
     :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.array
@@ -48,7 +48,7 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
         Sigma_inv = np.linalg.inv(Sigma)
     elif with_cov and Sigma is None:
         # estimate Sigma from data
-        AA_hat = estimate_MCAR(Y, p, P, Q, b, nu, with_cov=False)
+        AA_hat = estimate_MCAR_drift(Y, p, P, Q, b, nu, with_cov=False)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, mu)
         Sigma_inv = np.linalg.inv(Sigma_hat)
@@ -121,10 +121,9 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
         return AA_hat
 
 # Estimate grCAR parameter theta from state space observation
-def estimate_grCAR(Y: np.array, A: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, Sigma: np.array, with_cov: bool = False) -> np.array:
+def estimate_grCAR_drift(Y: np.array, A: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, Sigma: np.array, with_cov: bool = False) -> np.array:
     """
-    Estimate grCAR parameters from the state space realisation of a grCAR model and corresponding driving Levy process (with finite Levy measure)
-    with triplet (b, Sigma, rate*jump_F). Return the whole state space (CAR path is the first d entries).
+    Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
     :param Y: MCAR process observation, (d, N+1) np.array
     :param A: graph adjacency matrix, (d, d) np.array
     :param p: GrCAR parameter, int
@@ -212,8 +211,7 @@ def estimate_grCAR(Y: np.array, A: np.array, p: int, P: np.array, Q: np.array, b
 
 def recover_BDLP(Y: np.array, p: int, P: np.array, Q: np.array, AA: list):
     """
-    Recover the increments of the background driving Levy process L from MCAR observation Q and parameters AA.
-    First recover increments of L, then use 
+    Recover the increments of the background driving Levy process L over coarser partition Q from MCAR observation Y over finer partition P with parameters AA.
     :param Y: MCAR process observation, (d, N+1) np.array
     :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.array
@@ -263,17 +261,18 @@ def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, mu: np.array,
     :param Q: partition, [0 = u_0, ..., u_{N} = T], (N+1,) np.array
     :param Sigma: covariance of the Brownian part of the Levy process, (d, d) np.array
     :param mu: drift of Levy process E[L_1], (d,) np.array
-    :param gamma: hyperparameter for defining the critical region >1, float
+    :param gamma: hyperparameter for defining the critical region > 1, float
     :return DeltaW: subset of elements of DeltaL corresponding to the diffusion part only, (d, M) np.array with M <= N
             DeltaQ_W: time increments corresponding to the elements in DeltaW, (M,) np.array
     """
     # identify critical region x^T Sigma_inv x <= beta*2*Delta*log(N)
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
-    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaL - np.outer(mu, DeltaQ)), DeltaL - np.outer(mu, DeltaQ)) < 2*gamma*DeltaQ*np.log(N)
+    DeltaX = DeltaL - np.outer(mu, DeltaQ)
+    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaX), DeltaX) <= 2*gamma*DeltaQ*np.log(N)
     # return Brownian increments
     DeltaQ_W = DeltaQ[subset]
-    DeltaW = DeltaL[:, subset] - np.outer(mu, DeltaQ_W)
+    DeltaW = DeltaX[:, subset]
     return DeltaW, DeltaQ_W
 
 def estimate_Sigma(DeltaW: np.array, DeltaQ: np.array):
@@ -290,7 +289,7 @@ def estimate_Sigma(DeltaW: np.array, DeltaQ: np.array):
     Sigma_hat = np.einsum('ki,ji->kj', DeltaZ, DeltaZ) / DeltaZ.shape[1]
     return Sigma_hat
 
-def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array, epsilon: float = 0.01, gamma: float = 1.01, max_iter: int = 100):
+def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array = None, epsilon: float = 0.01, gamma: float = 1.01):
     """
     Estimate the covariance matrix Sigma of the Brownian component from (irregularly spaced) Levy increments. 
     Use the iterative approach in (Gegler, 2011) Section 4.
@@ -302,7 +301,8 @@ def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array, epsilon: float
     :return Sigma_hat: estimated covariance of the Brownian component, (d, d) np.array
     """
     # if mu is unknown, estimate it
-    mu = DeltaL.sum(axis=1) / Q[-1]
+    if mu is None:
+        mu = DeltaL.sum(axis=1) / Q[-1]
     # initialize procedure
     DeltaQ_W = np.diff(Q)
     DeltaW = DeltaL - np.outer(mu, DeltaQ_W)
@@ -325,6 +325,65 @@ def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array, epsilon: float
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
 
+def estimate_integral_Levy_measure(DeltaL: np.array, Q: np.array, mu: np.array, Sigma: np.array = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1, f: Callable = lambda x: x):
+    """
+    Estimate the functional f(F) = \int_K f(z) F(dz) where f: R^d -> R^n of the Levy measure F from (irregularly spaced) Levy increments DeltaL.
+    Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
+    If Sigma is known use the rejection-region based estimator in (Gegler, 2011) Section 2, otherwise use the iterative approach in (Gegler, 2011) Section 4.
+    :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
+    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
+    :param mu: drift of Levy process E[L_1], (d,) np.array
+    :param Sigma: covariance of Brownian component of L, (d, d) np.array
+    :param epsilon: tolerance level for defining convergence of iterative scheme, float
+    :param gamma: hyperparameter for defining the critical region > 1, float
+    :param K: integration region in functional, function mapping (d,) np.array to bool
+    :param f: integrand function, function mapping (d,) np.array to float
+    :return f_hat: estimated functional f of the Levy measure, float
+    """
+    # if mu is unknown, estimate it
+    if mu is None:
+        mu = DeltaL.sum(axis=1) / Q[-1]
+    if Sigma is not None:
+        DeltaQ = np.diff(Q)
+        N = len(DeltaQ)
+        # identify critical region x^T Sigma_inv x > beta*2*Delta*log(N)
+        DeltaX = DeltaL - np.outer(mu, DeltaQ)
+        subset = np.logical_and(
+            np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaX), DeltaX) > 2*gamma*DeltaQ*np.log(N),
+            [K(DeltaX[:, i]) for i in range(DeltaX.shape[1])]
+        )
+        DeltaZ = DeltaX[:, subset]
+        if DeltaZ.shape[1] < 1:
+            f_hat = 0
+        else:
+            f_hat = np.sum(np.array([f(DeltaZ[:, i]) for i in range(DeltaZ.shape[1])]), axis=0) / Q[-1]
+        return f_hat
+    else:
+        # initialize procedure
+        DeltaQ_W = np.diff(Q)
+        DeltaW = DeltaL - np.outer(mu, DeltaQ_W)
+        Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
+        f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, mu, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
+        converged = False
+        # keep track of fs to see if enter a loop
+        fs = [f_hat_new]
+        while not converged:
+            Sigma_hat_old = Sigma_hat_new
+            f_hat_old = f_hat_new
+            DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, mu, gamma=gamma)
+            Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
+            f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, mu, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
+            converged = np.linalg.norm(f_hat_new - f_hat_old) <= epsilon
+
+            # check if entering a loop
+            if any(np.array_equal(f_hat_new, f) for f in fs):
+                converged = True
+                index = np.argmax(np.array([np.array_equal(f_hat_new, f) for f in fs]))
+                f_hat_new = np.mean(np.array(fs)[index:, :], axis = 0)
+            else:
+                fs.append(f_hat_new)
+        return f_hat_new
+
 def choose_nu(DeltaL: np.array, Q: np.array, b: np.array, epsilon: float = 0.01, gamma: float = 1.01):
     """
     This function chooses thresholding powers beta to disentangle the continuous component from the jump 
@@ -333,7 +392,7 @@ def choose_nu(DeltaL: np.array, Q: np.array, b: np.array, epsilon: float = 0.01,
     :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
     :param b: drift of Levy process, (1,) np.array
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
-    :param gamma: hyperparameter for defining the critical region >1, float
+    :param gamma: hyperparameter for defining the critical region > 1, float
     :return nu: thresholding vector, (1, N) np.array
     """
     DeltaQ = np.diff(Q)

@@ -100,7 +100,7 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.array, b: np.array, Sigma: n
     W_component = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
 
     # increment due to jumps
-    N_T = scipy.stats.poisson(mu=rate*T).rvs(size=1)
+    N_T = scipy.stats.poisson(mu=rate*T).rvs(size=1)[0]
     jump_times = np.sort(scipy.stats.uniform().rvs(size=N_T)*T)
     jump_sizes = reshape_array(jump_F.rvs(size=N_T), d).T
     J_component = np.einsum('ijk,ki->j',scipy.linalg.expm(np.tensordot(jump_times, A, axes=0)), E.dot(jump_sizes))
@@ -236,7 +236,7 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np
 
         # increment due to jumps
         J_increments = np.zeros([pd, N-1])
-        N_T = scipy.stats.poisson(mu=rate*T).rvs(size=1)
+        N_T = scipy.stats.poisson(mu=rate*T).rvs(size=1)[0]
         jump_times = np.sort(scipy.stats.uniform().rvs(size=N_T)*T)
         jump_sizes = reshape_array(jump_F.rvs(size=N_T), d).T
         jump_indices = (jump_times // delta_t).astype(int)
@@ -312,5 +312,5 @@ def gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float 
     :param d: dimension of process, int
     :return increments: the increments of the process, (d, n) np.array
     """
-    increments = (scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n) - scipy.stats.gamma.rvs(a=delta_t, size=d*n)).reshape((d, -1))
+    increments = (scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n) - scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n)).reshape((d, -1))
     return increments
