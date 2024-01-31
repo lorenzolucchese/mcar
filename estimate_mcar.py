@@ -21,7 +21,7 @@ def state_space(Y: np.array, p: int, P: np.array) -> np.array:
     return X
 
 # Estimate MCAR parameter AA
-def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, with_cov: bool = False, Sigma: np.array = None) -> np.array:
+def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, with_cov: bool = False, Sigma: np.array = None, mu: np.array = None) -> np.array:
     """
     Estimate MCAR parameters from the state space realisation of a GrCAR model.
     with triplet (b, Sigma, rate*jump_F).
@@ -33,6 +33,7 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
     :param nu: thresholding sequence, (d, M) np.array
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.array
+    :param mu: drift of Levy process E[L_1] = b + \int_{|z|>1} z F(dz), np.array 
     :return if with_cov is True:
                 vec_AA_hat: vectorized estimated MCAR parameters, (pd**2,) np.array
                 HH: estimated covariance of the estimated MCAR parameters, (pd**2, pd**2) np.array
@@ -49,7 +50,7 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
         # estimate Sigma from data
         AA_hat = estimate_MCAR(Y, p, P, Q, b, nu, with_cov=False)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
-        Sigma_hat = estimate_Sigma_L(DeltaL, Q, b)
+        Sigma_hat = estimate_Sigma_L(DeltaL, Q, mu)
         Sigma_inv = np.linalg.inv(Sigma_hat)
     else:
         # no need to use Sigma if cov is not needed
@@ -75,7 +76,7 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
     if nu is None:
         nu = np.zeros_like(DY)
         for i in range(d):
-            nu[i, :] = choose_nu(DY[i:i+1, :], Q, b[i])
+            nu[i, :] = choose_nu(DY[i:i+1, :], Q, np.array([0]))
     
     # get thresholded increments
     DY_thresh = DY * (np.abs(DY) < nu)
@@ -89,7 +90,7 @@ def estimate_MCAR(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu
             integrand = X[-(k+1)*d+i, :]
             for j in range(d):
                 # left-hand Riemann sum (converges in L2 to Ito Integral)
-                integral[i] = np.sum(integrand[:-1] * DY_thresh[j, :])
+                integral[j] = np.sum(integrand[:-1] * DY_thresh[j, :])
             H[k*d**2+i*d:k*d**2+(i+1)*d] = - np.matmul(Sigma_inv, integral).reshape(-1)
 
     # compute [H]
@@ -254,14 +255,14 @@ def recover_BDLP(Y: np.array, p: int, P: np.array, Q: np.array, AA: list):
 
     return DeltaL_Q
 
-def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, b: np.array, gamma: float = 1.01):
+def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, mu: np.array, gamma: float = 1.01):
     """
     Disentangle Brownian-only increments on the partition Q.
     To define the critical region B_N we generalize the approach in (Gegler, 2011) to irregularly spaced data.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
     :param Q: partition, [0 = u_0, ..., u_{N} = T], (N+1,) np.array
     :param Sigma: covariance of the Brownian part of the Levy process, (d, d) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param mu: drift of Levy process E[L_1], (d,) np.array
     :param gamma: hyperparameter for defining the critical region >1, float
     :return DeltaW: subset of elements of DeltaL corresponding to the diffusion part only, (d, M) np.array with M <= N
             DeltaQ_W: time increments corresponding to the elements in DeltaW, (M,) np.array
@@ -269,10 +270,10 @@ def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, b: np.array, 
     # identify critical region x^T Sigma_inv x <= beta*2*Delta*log(N)
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
-    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaL), DeltaL) < 2*gamma*DeltaQ*np.log(N)
+    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaL - np.outer(mu, DeltaQ)), DeltaL - np.outer(mu, DeltaQ)) < 2*gamma*DeltaQ*np.log(N)
     # return Brownian increments
     DeltaQ_W = DeltaQ[subset]
-    DeltaW = DeltaL[:, subset] - np.outer(b, DeltaQ_W)
+    DeltaW = DeltaL[:, subset] - np.outer(mu, DeltaQ_W)
     return DeltaW, DeltaQ_W
 
 def estimate_Sigma(DeltaW: np.array, DeltaQ: np.array):
@@ -289,34 +290,37 @@ def estimate_Sigma(DeltaW: np.array, DeltaQ: np.array):
     Sigma_hat = np.einsum('ki,ji->kj', DeltaZ, DeltaZ) / DeltaZ.shape[1]
     return Sigma_hat
 
-def estimate_Sigma_L(DeltaL: np.array, Q: np.array, b: np.array, epsilon: float = 0.01, gamma: float = 1.01, max_iter: int = 100):
+def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array, epsilon: float = 0.01, gamma: float = 1.01, max_iter: int = 100):
     """
     Estimate the covariance matrix Sigma of the Brownian component from (irregularly spaced) Levy increments. 
     Use the iterative approach in (Gegler, 2011) Section 4.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
     :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param mu: drift of Levy process E[L_1], (d,) np.array
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region >1, float
     :return Sigma_hat: estimated covariance of the Brownian component, (d, d) np.array
     """
+    # if mu is unknown, estimate it
+    mu = DeltaL.sum(axis=1) / Q[-1]
     # initialize procedure
     DeltaQ_W = np.diff(Q)
-    DeltaW = DeltaL - np.outer(b, DeltaQ_W)
+    DeltaW = DeltaL - np.outer(mu, DeltaQ_W)
     Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
     converged = False
     # keep track of Sigmas to see if enter a loop
     Sigmas = [Sigma_hat_new]
     while not converged:
         Sigma_hat_old = Sigma_hat_new
-        DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, b, gamma=gamma)
+        DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, mu, gamma=gamma)
         Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
         converged = np.linalg.norm(Sigma_hat_new - Sigma_hat_old) <= epsilon
 
         # check if entering a loop
-        if Sigma_hat_new in Sigmas:
+        if any(np.array_equal(Sigma_hat_new, Sigma) for Sigma in Sigmas):
             converged = True
-            Sigma_hat_new = np.mean(Sigmas[Sigmas.index(Sigma_hat_new):], axis = 0)
+            index = np.argmax(np.array([np.array_equal(Sigma_hat_new, Sigma) for Sigma in Sigmas]))
+            Sigma_hat_new = np.mean(np.array(Sigmas)[index:, :, :], axis = 0)
         else:
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
