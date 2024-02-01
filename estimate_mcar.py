@@ -410,19 +410,26 @@ def estimate_MCAR(
         Sigma: np.array = None, 
         f: np.array = None, 
         mu: np.array = None,
-        jump_activity: str = 'finite'
+        jump_activity: str = 'finite',
+        mu_estimator: str = 'MCAR_mean'
     ):
     """
     Estimate MCAR parameters from the realisation of a MCAR process. Estimate both drift parameter and Levy triplet parameters (b, Sigma).
+    Here the Levy drift parameter b corresponds to 
+        - no truncation t(x) = 0 when the process has finite jump activity, thus mu := E[L_1] = b + \int_{R^d} z F(dz) =: b + f.
+        - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus mu := E[L_1] = b + \int_{|z|>1} z F(dz) =: b + f.
+    If some parameters are known or want to be fixed, these can be provide as arguments. Can also fix mu or f (e.g. if jump component is assumed symmetric set f=0).
     Use iterative procedure:
         1. Start with b_hat = 0.
         2. Estimate AA_hat using b_hat. 
-        3. Estimate (b_hat, Sigma_hat) using AA_hat to recover the driving Levy process.
+        3. Estimate (b_hat, Sigma_hat) using AA_hat to recover the driving Levy process. 
+           To estimate Sigma_hat use iterative thresholding as in (Gegler, 2011).
+           To estimate b_hat = mu_hat - f_hat we use:
+            - for mu_hat can either:
+                - use the recovered Levy process slope, i.e. mu_hat = L_t / t
+                - use the MCAR mean, i.e. mu_hat = A_hat[p-1] Y.mean()
+            - for f_hat use Sigma_hat and thresholding as in (Gegler, 2011).
         4. Iterate 2. and 3. until convergence criterion is met.
-    Here the Levy drift parameter b corresponds to 
-        - no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
-        - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
-    If some parameters are known or want to be fixed, these can be provide as arguments. Can also fix mu or f (e.g. if jump component is assumed symmetric set f=0).
     :param Y: MCAR process observation, (d, N+1) np.array
     :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.array
@@ -444,7 +451,12 @@ def estimate_MCAR(
     AA_hat = estimate_MCAR_drift(Y, p, P, Q, b_hat) if AA is None else AA
     DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
     Sigma_hat = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
-    mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+    if mu_estimator == 'Levy_slope':
+        mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+    elif mu_estimator == 'MCAR_mean':
+        mu_hat = AA_hat[p-1].dot(Y.mean(axis=1)) if mu is None else mu
+    else:
+        raise ValueError("mu_estimator must be 'Levy_slope' or 'MCAR_mean.")
     if jump_activity == 'finite':
         f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: True, f= lambda x: x) if f is None else f
     elif jump_activity == 'infinite':
@@ -468,7 +480,10 @@ def estimate_MCAR(
         AA_hat_new = estimate_MCAR_drift(Y, p, P, Q, b_hat) if AA is None else AA
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
         Sigma_hat_new = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
-        mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+        if mu_estimator == 'Levy_slope':
+            mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+        elif mu_estimator == 'MCAR_mean':
+            mu_hat = AA_hat_new[p-1].dot(Y.mean(axis=1)) if mu is None else mu
         if jump_activity == 'finite':
             f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat_new, K = lambda x: True, f= lambda x: x) if f is None else f
         elif jump_activity == 'infinite':
