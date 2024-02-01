@@ -1,6 +1,7 @@
 # TODO: write as class
 import numpy as np
 from typing import Callable
+import warnings
 
 # State space representation from observation
 def state_space(Y: np.array, p: int, P: np.array) -> np.array:
@@ -22,23 +23,25 @@ def state_space(Y: np.array, p: int, P: np.array) -> np.array:
     return X
 
 # Estimate MCAR parameter AA
-def estimate_MCAR_drift(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, with_cov: bool = False, Sigma: np.array = None, mu: np.array = None) -> np.array:
+def estimate_MCAR_drift(Y: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array = None, with_cov: bool = False, Sigma: np.array = None,) -> np.array:
     """
     Estimate MCAR drift parameters from the realisation of a MCAR process with driving Levy triplet (b, Sigma, F).
+    Here the Levy drift parameter b corresponds to 
+        - no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
+        - classic trunctaion t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
     :param Y: MCAR process observation, (d, N+1) np.array
     :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.array
     :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = T], (M+1,) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param b: drift parameter of Levy process, (d,) np.array
     :param nu: thresholding sequence, (d, M) np.array
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.array
-    :param mu: drift of Levy process E[L_1] = b + \int_{|z|>1} z F(dz), np.array 
     :return if with_cov is True:
-                vec_AA_hat: vectorized estimated MCAR parameters, (pd**2,) np.array
+                vec_AA_hat: vectorized estimated MCAR drift parameters, (pd**2,) np.array
                 HH: estimated covariance of the estimated MCAR parameters, (pd**2, pd**2) np.array
             else:
-                AA_hat: estimated MCAR parameters, list of p (d, d) np.arrays
+                AA_hat: estimated MCAR drift parameters, list of p (d, d) np.arrays
     """
     # get dimension
     d = Y.shape[0]
@@ -50,7 +53,7 @@ def estimate_MCAR_drift(Y: np.array, p: int, P: np.array, Q: np.array, b: np.arr
         # estimate Sigma from data
         AA_hat = estimate_MCAR_drift(Y, p, P, Q, b, nu, with_cov=False)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
-        Sigma_hat = estimate_Sigma_L(DeltaL, Q, mu)
+        Sigma_hat = estimate_Sigma_L(DeltaL, Q)
         Sigma_inv = np.linalg.inv(Sigma_hat)
     else:
         # no need to use Sigma if cov is not needed
@@ -124,6 +127,9 @@ def estimate_MCAR_drift(Y: np.array, p: int, P: np.array, Q: np.array, b: np.arr
 def estimate_grCAR_drift(Y: np.array, A: np.array, p: int, P: np.array, Q: np.array, b: np.array, nu: np.array, Sigma: np.array, with_cov: bool = False) -> np.array:
     """
     Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
+    Here the Levy drift parameter b corresponds to 
+        - no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
+        - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
     :param Y: MCAR process observation, (d, N+1) np.array
     :param A: graph adjacency matrix, (d, d) np.array
     :param p: GrCAR parameter, int
@@ -253,14 +259,13 @@ def recover_BDLP(Y: np.array, p: int, P: np.array, Q: np.array, AA: list):
 
     return DeltaL_Q
 
-def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, mu: np.array, gamma: float = 1.01):
+def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, gamma: float = 1.01):
     """
     Disentangle Brownian-only increments on the partition Q.
     To define the critical region B_N we generalize the approach in (Gegler, 2011) to irregularly spaced data.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
     :param Q: partition, [0 = u_0, ..., u_{N} = T], (N+1,) np.array
     :param Sigma: covariance of the Brownian part of the Levy process, (d, d) np.array
-    :param mu: drift of Levy process E[L_1], (d,) np.array
     :param gamma: hyperparameter for defining the critical region > 1, float
     :return DeltaW: subset of elements of DeltaL corresponding to the diffusion part only, (d, M) np.array with M <= N
             DeltaQ_W: time increments corresponding to the elements in DeltaW, (M,) np.array
@@ -268,8 +273,8 @@ def disentangle_BM(DeltaL: np.array, Q: np.array, Sigma: np.array, mu: np.array,
     # identify critical region x^T Sigma_inv x <= beta*2*Delta*log(N)
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
-    DeltaX = DeltaL - np.outer(mu, DeltaQ)
-    subset = np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaX), DeltaX) <= 2*gamma*DeltaQ*np.log(N)
+    DeltaX = DeltaL
+    subset = np.einsum('ki,ki->i', DeltaX, np.linalg.inv(Sigma).dot(DeltaX)) <= 2*gamma*DeltaQ*np.log(N)
     # return Brownian increments
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaX[:, subset]
@@ -289,50 +294,46 @@ def estimate_Sigma(DeltaW: np.array, DeltaQ: np.array):
     Sigma_hat = np.einsum('ki,ji->kj', DeltaZ, DeltaZ) / DeltaZ.shape[1]
     return Sigma_hat
 
-def estimate_Sigma_L(DeltaL: np.array, Q: np.array, mu: np.array = None, epsilon: float = 0.01, gamma: float = 1.01):
+def estimate_Sigma_L(DeltaL: np.array, Q: np.array, epsilon: float = 0.01, gamma: float = 1.01):
     """
     Estimate the covariance matrix Sigma of the Brownian component from (irregularly spaced) Levy increments. 
     Use the iterative approach in (Gegler, 2011) Section 4.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
     :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
-    :param mu: drift of Levy process E[L_1], (d,) np.array
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region >1, float
     :return Sigma_hat: estimated covariance of the Brownian component, (d, d) np.array
     """
-    # if mu is unknown, estimate it
-    if mu is None:
-        mu = DeltaL.sum(axis=1) / Q[-1]
     # initialize procedure
     DeltaQ_W = np.diff(Q)
-    DeltaW = DeltaL - np.outer(mu, DeltaQ_W)
+    DeltaW = DeltaL
     Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
     converged = False
     # keep track of Sigmas to see if enter a loop
     Sigmas = [Sigma_hat_new]
     while not converged:
         Sigma_hat_old = Sigma_hat_new
-        DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, mu, gamma=gamma)
+        DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, gamma=gamma)
         Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
         converged = np.linalg.norm(Sigma_hat_new - Sigma_hat_old) <= epsilon
 
         # check if entering a loop
         if any(np.array_equal(Sigma_hat_new, Sigma) for Sigma in Sigmas):
             converged = True
+            # take average of loop values
             index = np.argmax(np.array([np.array_equal(Sigma_hat_new, Sigma) for Sigma in Sigmas]))
             Sigma_hat_new = np.mean(np.array(Sigmas)[index:, :, :], axis = 0)
         else:
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
 
-def estimate_integral_Levy_measure(DeltaL: np.array, Q: np.array, mu: np.array, Sigma: np.array = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1, f: Callable = lambda x: x):
+def estimate_integral_Levy_measure(DeltaL: np.array, Q: np.array, Sigma: np.array = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1, f: Callable = lambda x: x):
     """
     Estimate the functional f(F) = \int_K f(z) F(dz) where f: R^d -> R^n of the Levy measure F from (irregularly spaced) Levy increments DeltaL.
     Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
     If Sigma is known use the rejection-region based estimator in (Gegler, 2011) Section 2, otherwise use the iterative approach in (Gegler, 2011) Section 4.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.array
     :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
-    :param mu: drift of Levy process E[L_1], (d,) np.array
     :param Sigma: covariance of Brownian component of L, (d, d) np.array
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region > 1, float
@@ -340,62 +341,158 @@ def estimate_integral_Levy_measure(DeltaL: np.array, Q: np.array, mu: np.array, 
     :param f: integrand function, function mapping (d,) np.array to float
     :return f_hat: estimated functional f of the Levy measure, float
     """
-    # if mu is unknown, estimate it
-    if mu is None:
-        mu = DeltaL.sum(axis=1) / Q[-1]
     if Sigma is not None:
         DeltaQ = np.diff(Q)
         N = len(DeltaQ)
         # identify critical region x^T Sigma_inv x > beta*2*Delta*log(N)
-        DeltaX = DeltaL - np.outer(mu, DeltaQ)
         subset = np.logical_and(
-            np.einsum('ji,ki->i', np.linalg.inv(Sigma).dot(DeltaX), DeltaX) > 2*gamma*DeltaQ*np.log(N),
-            [K(DeltaX[:, i]) for i in range(DeltaX.shape[1])]
+            np.einsum('ki,ki->i', np.linalg.inv(Sigma).dot(DeltaL), DeltaL) > 2*gamma*DeltaQ*np.log(N),
+            [K(DeltaL[:, i]) for i in range(DeltaL.shape[1])]
         )
-        DeltaZ = DeltaX[:, subset]
+        DeltaZ = DeltaL[:, subset]
         if DeltaZ.shape[1] < 1:
             f_hat = 0
         else:
+            # check this is OK also for non-uniform partition
             f_hat = np.sum(np.array([f(DeltaZ[:, i]) for i in range(DeltaZ.shape[1])]), axis=0) / Q[-1]
         return f_hat
     else:
         # initialize procedure
         DeltaQ_W = np.diff(Q)
-        DeltaW = DeltaL - np.outer(mu, DeltaQ_W)
+        DeltaW = DeltaL
         Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
-        f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, mu, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
+        f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
         converged = False
         # keep track of fs to see if enter a loop
         fs = [f_hat_new]
         while not converged:
             Sigma_hat_old = Sigma_hat_new
             f_hat_old = f_hat_new
-            DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, mu, gamma=gamma)
+            DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, gamma=gamma)
             Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
-            f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, mu, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
+            f_hat_new = estimate_integral_Levy_measure(DeltaL, Q, Sigma = Sigma_hat_new, epsilon = epsilon, gamma = gamma, K = K, f = f)
             converged = np.linalg.norm(f_hat_new - f_hat_old) <= epsilon
 
             # check if entering a loop
             if any(np.array_equal(f_hat_new, f) for f in fs):
                 converged = True
+                # take average of loop values
                 index = np.argmax(np.array([np.array_equal(f_hat_new, f) for f in fs]))
                 f_hat_new = np.mean(np.array(fs)[index:, :], axis = 0)
             else:
                 fs.append(f_hat_new)
         return f_hat_new
 
-def choose_nu(DeltaL: np.array, Q: np.array, b: np.array, epsilon: float = 0.01, gamma: float = 1.01):
+def choose_nu(DeltaL: np.array, Q: np.array, epsilon: float = 0.01, gamma: float = 1.01):
     """
-    This function chooses thresholding powers beta to disentangle the continuous component from the jump 
-    component of a one dimenisonal Levy process.
+    This function chooses thresholding powers beta to disentangle the continuous component from the jump component of a one dimenisonal Levy process.
     :param DeltaL: increments of Levy process on the partition Q, (1, N) np.array
     :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.array
-    :param b: drift of Levy process, (1,) np.array
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region > 1, float
     :return nu: thresholding vector, (1, N) np.array
     """
     DeltaQ = np.diff(Q)
-    Sigma_hat = estimate_Sigma_L(DeltaL, Q, b, epsilon, gamma)
+    Sigma_hat = estimate_Sigma_L(DeltaL, Q, epsilon, gamma)
     nu = np.sqrt(DeltaQ * 2 * gamma * np.log(len(DeltaQ)) * Sigma_hat)
     return nu
+
+
+def estimate_MCAR(
+        Y: np.array, 
+        p: int, 
+        P: np.array, 
+        Q: np.array, 
+        epsilon: float = 0.01, 
+        max_iter: int = 100, 
+        AA: list = None, 
+        b: np.array = None, 
+        Sigma: np.array = None, 
+        f: np.array = None, 
+        mu: np.array = None,
+        jump_activity: str = 'finite'
+    ):
+    """
+    Estimate MCAR parameters from the realisation of a MCAR process. Estimate both drift parameter and Levy triplet parameters (b, Sigma).
+    Use iterative procedure:
+        1. Start with b_hat = 0.
+        2. Estimate AA_hat using b_hat. 
+        3. Estimate (b_hat, Sigma_hat) using AA_hat to recover the driving Levy process.
+        4. Iterate 2. and 3. until convergence criterion is met.
+    Here the Levy drift parameter b corresponds to 
+        - no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
+        - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
+    If some parameters are known or want to be fixed, these can be provide as arguments. Can also fix mu or f (e.g. if jump component is assumed symmetric set f=0).
+    :param Y: MCAR process observation, (d, N+1) np.array
+    :param p: MCAR parameter, int
+    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.array
+    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = T], (M+1,) np.array
+    :param epsilon: tolerance level for defining convergence of iterative scheme, float
+    :param max_iter: maximum number of iterations, int
+    :param b: drift parameter of Levy process, (d,) np.array
+    :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.array
+    :param f: Levy measure component of drift parameter f:= \int_{|z|>1} z F(dz) or \int_{R^d} z F(dz), (d,) np.array
+    :param mu: 'actual' drift of Levy process mu := E[L_1], (d,) np.array
+    :return AA_hat: estimated MCAR drift parameters, list of p (d, d) np.arrays
+            b_hat: estimated driving Levy process drift parameter, (d,) np.array
+            Sigma_hat: estimated driving Levy process covariance parameter, (d,) np.array
+    """
+    d = Y.shape[0]
+    
+    b_hat = np.zeros(d) if b is None else b
+
+    AA_hat = estimate_MCAR_drift(Y, p, P, Q, b_hat) if AA is None else AA
+    DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
+    Sigma_hat = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
+    mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+    if jump_activity == 'finite':
+        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: True, f= lambda x: x) if f is None else f
+    elif jump_activity == 'infinite':
+        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 1, f= lambda x: x) if f is None else f
+    else:
+        raise ValueError("jump_activity must be 'finite' or 'infinite.")
+    b_hat = mu_hat - f_hat if b is None else b
+    
+    converged = False
+
+    # keep track of parameters to check if we enter a loop
+    AAs = [AA_hat]
+    bs = [b_hat]
+    Sigmas = [Sigma_hat]
+
+    n_iter = 0
+
+    while not converged:
+        n_iter += 1
+
+        AA_hat_new = estimate_MCAR_drift(Y, p, P, Q, b_hat) if AA is None else AA
+        DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
+        Sigma_hat_new = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
+        mu_hat = DeltaL.sum(axis=1) / P[-1] if mu is None else mu
+        if jump_activity == 'finite':
+            f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat_new, K = lambda x: True, f= lambda x: x) if f is None else f
+        elif jump_activity == 'infinite':
+            f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat_new, K = lambda x: np.linalg.norm(x) > 1, f= lambda x: x) if f is None else f
+        b_hat = mu_hat - f_hat if b is None else b
+
+        converged = np.sum([np.linalg.norm(AA_hat_new[i] - AA_hat[i]) for i in range(p)]) <= epsilon 
+        
+        if n_iter >= max_iter:
+            converged = True
+            warnings.warn('maximum number of iterations exceeded.')
+
+        # check if entering a loop
+        if any(np.array_equal(b_hat, b_) for b_ in bs):
+            converged = True
+            # take average of loop values
+            index = np.argmax(np.array([np.array_equal(b_hat, b_) for b_ in bs]))
+            AA_hat = [np.mean(np.array(AAs)[index:, i, :, :], axis = 0) for i in range(p)]
+            b_hat = np.mean(np.array(bs)[index:, :], axis = 0)
+            Sigma_hat = np.mean(np.array(Sigmas)[index:, :, :], axis = 0)
+        else:
+            AA_hat = AA_hat_new
+            AAs.append(AA_hat)
+            bs.append(b_hat)
+            Sigmas.append(Sigma_hat)
+
+    return AA_hat, (b_hat, Sigma_hat)

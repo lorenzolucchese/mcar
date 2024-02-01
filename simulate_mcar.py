@@ -50,17 +50,17 @@ def grCAR_A(theta: np.array, A: np.array) -> np.array:
     A_theta = MCAR_A(AA)
     return A_theta
 
-def simulate_MCAR_stat_distr_approx(A: np.array, b: np.array, Sigma: np.array, jumps):
+def simulate_MCAR_stat_distr_approx(A: np.array, a: np.array, Sigma: np.array, jumps):
     """
     Simulate from stationary distribution of MCAR process by approximating integral discretely.
     :param A: MCAR structural matrix, (pd, pd) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param a: drift of Levy process with identity trunctaion function i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.array
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.array
     :param jumps: function for generating n jump increments over an interval delta_t, function(delta_t, n)
     :return x: sample from stationary distribution, (d,) np.array
     """
     pd = A.shape[0]
-    d = b.shape[0]
+    d = a.shape[0]
     E = np.zeros([pd, d])
     E[-d:,:] = np.eye(d)
     # approximate integral, choose T depending on |A| (depending on how fast e^As decays)
@@ -70,20 +70,20 @@ def simulate_MCAR_stat_distr_approx(A: np.array, b: np.array, Sigma: np.array, j
     P = np.linspace(0, T, N+1)
     delta_t = T/N
     delta_jump_L = jumps(delta_t, N)
-    delta_L = scipy.stats.multivariate_normal(mean=b*delta_t, cov=Sigma*delta_t).rvs(size=N).T + delta_jump_L
+    delta_L = scipy.stats.multivariate_normal(mean=a*delta_t, cov=Sigma*delta_t).rvs(size=N).T + delta_jump_L
     return np.tensordot(scipy.linalg.expm(np.tensordot(P[:-1], A, axes=0)), np.matmul(E, delta_L), axes=[[0, 2], [1, 0]])
     
-def simulate_MCAR_stat_distr_compound_poisson(A: np.array, b: np.array, Sigma: np.array, rate: float, jump_F: scipy.stats._multivariate):
+def simulate_MCAR_stat_distr_compound_poisson(A: np.array, a: np.array, Sigma: np.array, rate: float, jump_F: scipy.stats._multivariate):
     """
     Simulate from stationary distribution of finite activity MCAR process exactly.
     :param A: MCAR structural matrix, (pd, pd) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param a: drift of Levy process with identity trunctaion function i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.array
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.array
     :param jumps: function for generating n jump increments over an interval delta_t, function(delta_t, n)
     :return x: sample from stationary distribution, (d,) np.array
     """
     pd = A.shape[0]
-    d = b.shape[0]
+    d = a.shape[0]
     E = np.zeros([pd, d])
     E[-d:,:] = np.eye(d)
     Sigma_tilde = E.dot(Sigma).dot(E.T)
@@ -96,7 +96,7 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.array, b: np.array, Sigma: n
     M[pd:, pd:] = - A.T
     V = scipy.linalg.expm(M*T)[:pd, pd:].dot(scipy.linalg.expm(A*T).T)
 
-    b_component = - np.linalg.inv(A).dot(E).dot(b)
+    a_component = - np.linalg.inv(A).dot(E).dot(a)
     W_component = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
 
     # increment due to jumps
@@ -105,17 +105,17 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.array, b: np.array, Sigma: n
     jump_sizes = reshape_array(jump_F.rvs(size=N_T), d).T
     J_component = np.einsum('ijk,ki->j',scipy.linalg.expm(np.tensordot(jump_times, A, axes=0)), E.dot(jump_sizes))
 
-    x = b_component + W_component + J_component
+    x = a_component + W_component + J_component
     return x
 
-def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Sigma: np.array, jumps, output_format: str = 'MCAR', uniform=False):
+def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, a: np.array, Sigma: np.array, jumps, output_format: str = 'MCAR', uniform=False):
     """
     Simulate (discrete) paths from a MCAR model with structural matrix A and driving Levy process (with finite Levy measure)
     with triplet (b, Sigma, F) using Euler-Maruyama method:
     :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.array
     :param A: MCAR structural matrix, (pd, pd) np.array
     :param x0: state space initial condition, (pd,) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param a: drift of Levy process with identity trunctaion function i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.array
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.array
     :param jumps: function for generating n jump increments over an time interval delta_t, function(delta_t, n)
     :param output_format: format of output, str in ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']
@@ -125,7 +125,7 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
             jump_L: jumps in the driving Levy process, (d, N+1) np.array
     """
     # get dimensions and time step
-    d = len(b)
+    d = len(a)
     pd = len(x0)
     N = len(P)
     
@@ -146,7 +146,7 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
     if uniform:
         delta_t = P[1] - P[0]
         delta_jump_L = jumps(delta_t, N-1)
-        delta_L = b.reshape(-1, 1) * delta_t + delta_W + delta_jump_L
+        delta_L = a.reshape(-1, 1) * delta_t + delta_W + delta_jump_L
         jump_L[:, 1:] = delta_jump_L.cumsum(axis=1)
 
         # get Levy process
@@ -157,7 +157,7 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
             
             # Levy increment (continuous and jump parts)
             delta_jump_L = jumps(delta_t, 1).reshape(-1, 1)
-            delta_L[:, n] = b.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
+            delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
             
             # evolve the processes
             jump_L[:, n + 1] = jump_L[:, n] + delta_jump_L
@@ -178,19 +178,19 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, b: np.array, Si
     else:
         raise ValueError("output_format must be one of ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']")
 
-def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np.array, Sigma: np.array, rate: float, jump_F: scipy.stats._multivariate, output_format: str = 'MCAR', uniform=False):
+def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np.array, Sigma: np.array, rate: float, jump_F: scipy.stats._multivariate, output_format: str = 'MCAR', uniform=False):
     """
     Simulate (discrete) paths from a MCAR model with structural matrix A and driving Levy process (with finite Levy measure)
     with triplet (b, Sigma, F).
-    X_t = e^{A(t-s)} X_s + int_s^t e^{A(t-r)} dL_r = e^{A(t-s)}X_s + int_s^t e^{A(t-r)} (b dr + dW_r + dJ_r)
-    where int_s^t e^{A(t-r)} b dr = (e^{A(t-s)} - I) A^{-1} b
+    X_t = e^{A(t-s)} X_s + int_s^t e^{A(t-r)} dL_r = e^{A(t-s)}X_s + int_s^t e^{A(t-r)} (a dr + dW_r + dJ_r)
+    where int_s^t e^{A(t-r)} a dr = (e^{A(t-s)} - I) A^{-1} a
           int_s^t e^{A(t-r)} dW_r ~ N(0, F(t-s) e^{A^T(t-s)}) where e^Mh = [e^{Ah}, F(h) // 0, e^{-A^Th}] with M = [A, Σ // 0, -A^T] for W~N(0, Σ)
           int_s^t e^{A(t-r)} dJ_r = sum_{r\in[s,t]} e^{A(t-r)} ΔJ_{r}
     recall need to multiply E b, E Sigma E^T, and E jumps
     :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.array
     :param A: MCAR structural matrix, (pd, pd) np.array
     :param x0: state space initial condition, (pd,) np.array
-    :param b: drift of Levy process, (d,) np.array
+    :param a: drift of Levy process with identity trunctaion function i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.array
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.array
     :param jumps: function for generating n jump component increments over an interval delta_t, function(delta_t, n)
     :param output_format: format of output, str in ['MCAR', 'SS']
@@ -200,7 +200,7 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np
                 X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.array
     """
     # get dimensions and time step
-    d = len(b)
+    d = len(a)
     pd = len(x0)
     N = len(P)
     T = P[-1] - P[0]
@@ -228,7 +228,7 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np
         eAt = scipy.linalg.fractional_matrix_power(eA, delta_t).real
         
         # increment due to b
-        b_increment = (eAt - np.eye(pd)).dot(A_inv).dot(E).dot(b)
+        a_increment = (eAt - np.eye(pd)).dot(A_inv).dot(E).dot(a)
         
         # increment due to W
         V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
@@ -245,14 +245,14 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np
         
         # evolve the process
         for n in range(N-1):
-            X[:, n+1] = eAt.dot(X[:, n]) + b_increment + W_increments[:, n] + J_increments[:, n]
+            X[:, n+1] = eAt.dot(X[:, n]) + a_increment + W_increments[:, n] + J_increments[:, n]
     else: 
         for n in range(N-1):
             delta_t = P[n+1] - P[n]
             eAt = scipy.linalg.fractional_matrix_power(eA, delta_t).real
 
             # increment due to b
-            b_increment = (eAt - np.eye(pd)).dot(A_inv).dot(E).dot(b)
+            a_increment = (eAt - np.eye(pd)).dot(A_inv).dot(E).dot(a)
             
             # increment due to W
             M = np.zeros([2*pd, 2*pd])
@@ -271,7 +271,7 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, b: np
                 J_increment += scipy.linalg.fractional_matrix_power(eA, delta_t - jump_times[_]).real.dot(E).dot(jump_sizes[:, _])
 
             # evolve the process
-            X[:, n+1] = eAt.dot(X[:, n]) + b_increment + W_increment + J_increment
+            X[:, n+1] = eAt.dot(X[:, n]) + a_increment + W_increment + J_increment
 
     if output_format == 'MCAR':
         return X[:d, :]
@@ -301,9 +301,10 @@ def compound_poisson(delta_t: float, n: int, rate: float, jump_F: scipy.stats._m
         increments[:, jump_index] += jump_sizes[:, i]
     return increments
 
+
 def gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float = 1):
     """
-    Generate n increments of a d-dimenisonal process with independent symmetric Gamma components
+    Generate n increments of a d-dimensional process with independent symmetric Gamma components
     over an interval of size delta_t.
     :param delta_t: time step of increment, float
     :param n: number of increments to generate, int
@@ -313,4 +314,19 @@ def gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float 
     :return increments: the increments of the process, (d, n) np.array
     """
     increments = (scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n) - scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n)).reshape((d, -1))
+    return increments
+
+
+def asymm_gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float = 1):
+    """
+    Generate n increments of a d-dimensional process with independent one-sided Gamma components
+    over an interval of size delta_t.
+    :param delta_t: time step of increment, float
+    :param n: number of increments to generate, int
+    :param shape: shape of Gamma distribution, float
+    :param scale: scale of Gamma distribution, float
+    :param d: dimension of process, int
+    :return increments: the increments of the process, (d, n) np.array
+    """
+    increments = scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n).reshape((d, -1))
     return increments
