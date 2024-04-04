@@ -145,9 +145,11 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, a: np.array, Si
 
     if uniform:
         delta_t = P[1] - P[0]
-        delta_jump_L = jumps(delta_t, N-1)
-        delta_L = a.reshape(-1, 1) * delta_t + delta_W + delta_jump_L
-        jump_L[:, 1:] = delta_jump_L.cumsum(axis=1)
+        delta_L = a.reshape(-1, 1) * delta_t + delta_W
+        if jumps is not None:
+            delta_jump_L = jumps(delta_t, N-1)
+            delta_L += delta_jump_L
+            jump_L[:, 1:] = delta_jump_L.cumsum(axis=1)
 
         # get Levy process
         L[:, 1:] = delta_L.cumsum(axis=1)
@@ -156,11 +158,13 @@ def simulate_MCAR_approx(P: np.array, A: np.array, x0: np.array, a: np.array, Si
             delta_t = P[n+1] - P[n]
             
             # Levy increment (continuous and jump parts)
-            delta_jump_L = jumps(delta_t, 1).reshape(-1, 1)
-            delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
+            delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n]
+            if jumps is not None:
+                delta_jump_L = jumps(delta_t, 1).reshape(-1, 1)
+                delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
+                jump_L[:, n + 1] = jump_L[:, n] + delta_jump_L
             
             # evolve the processes
-            jump_L[:, n + 1] = jump_L[:, n] + delta_jump_L
             L[:, n + 1] = L[:, n] + delta_L[:, n]
     
     # evolve state space
@@ -196,8 +200,12 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
     :param output_format: format of output, str in ['MCAR', 'SS']
     :return if output_format = 'MCAR':
                 Y: MCAR simulation, (d, N+1) np.array
-            if output_format = 'SS':
+            elif output_format = 'SS':
                 X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.array
+            elif output_format = 'SS + jumps':
+                X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.array
+                jump_times: jump times of the p-1 derivative of Y, (T,) np.array
+                jump_sizes: jump magnitudes of the p-1 derivative of Y at jump_times, (d, T) np.array
     """
     # get dimensions and time step
     d = len(a)
@@ -231,7 +239,7 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
         a_increment = (eAt - np.eye(pd)).dot(A_inv).dot(E).dot(a)
         
         # increment due to W
-        V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
+        V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T) + 1e-12*np.eye(pd)
         W_increments = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1).T
 
         # increment due to jumps
@@ -247,6 +255,8 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
         for n in range(N-1):
             X[:, n+1] = eAt.dot(X[:, n]) + a_increment + W_increments[:, n] + J_increments[:, n]
     else: 
+        jump_times = np.array([])
+        jump_sizes = np.array([])
         for n in range(N-1):
             delta_t = P[n+1] - P[n]
             eAt = scipy.linalg.fractional_matrix_power(eA, delta_t).real
@@ -259,16 +269,20 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
             M[:pd, :pd] = A
             M[:pd, pd:] = Sigma_tilde
             M[pd:, pd:] = - A.T
-            V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
+            V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T) + 1e-12*np.eye(pd)
             W_increment = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
 
             # increment due to jumps
             N_delta = int(scipy.stats.poisson(mu=rate*delta_t).rvs(size=1))
-            jump_sizes = reshape_array(jump_F.rvs(size=N_delta), d)
-            jump_times = np.sort(scipy.stats.uniform().rvs(size=N_delta)*delta_t)
-            J_increment = 0
+            jump_sizes_delta = reshape_array(jump_F.rvs(size=N_delta), d)
+            jump_times_delta = np.sort(scipy.stats.uniform().rvs(size=N_delta)*delta_t)
+            J_increment = np.zeros(pd)
             for _ in range(N_delta):
-                J_increment += scipy.linalg.fractional_matrix_power(eA, delta_t - jump_times[_]).real.dot(E).dot(jump_sizes[:, _])
+                J_increment += scipy.linalg.fractional_matrix_power(eA, delta_t - jump_times_delta[_]).real.dot(E).dot(jump_sizes_delta[_, :])
+
+            # append jump times and sizes
+            jump_times = np.append(jump_times, P[n+1] - jump_times_delta)
+            jump_sizes = np.append(jump_sizes, jump_sizes_delta)
 
             # evolve the process
             X[:, n+1] = eAt.dot(X[:, n]) + a_increment + W_increment + J_increment
@@ -277,8 +291,10 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
         return X[:d, :]
     elif output_format == 'SS':
         return X
+    elif output_format == 'SS + jumps':
+        return X, jump_times, jump_sizes
     else:
-        raise ValueError("output_format must be one of ['MCAR', 'SS']")
+        raise ValueError("output_format must be one of ['MCAR', 'SS', 'SS + jumps']")
     
 
 def compound_poisson(delta_t: float, n: int, rate: float, jump_F: scipy.stats._multivariate, d: int):
