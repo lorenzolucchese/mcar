@@ -339,7 +339,7 @@ def estimate_MCAR(
         Sigma: np.ndarray = None, 
         f: np.ndarray = None, 
         mu: np.ndarray = None,
-        jump_activity: str = 'finite',
+        jump_activity: str = 'infinite',
         mu_estimator: str = 'MCAR_mean'
     ):
     """

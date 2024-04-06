@@ -241,6 +241,8 @@ def simulate_MCAR_compound_poisson(P: np.array, A: np.array, x0: np.array, a: np
         # increment due to W
         V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T) + 1e-12*np.eye(pd)
         W_increments = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1).T
+        if pd == 1:
+            W_increments = W_increments.reshape(1, -1)
 
         # increment due to jumps
         J_increments = np.zeros([pd, N-1])
