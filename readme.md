@@ -1,6 +1,6 @@
 # MCAR
 
-This repository contains code for simulating and estimating Multivariate Continuous-time Autoregressive (MCAR) processes. For an overview of multivariate CAR(MA) processes, see [Marquardt and Stelzer, 2007](https://www.sciencedirect.com/science/article/pii/S0304414906000846). The estimators implemented in this repository are primarily based on the methods developed in [Lucchese et al., 2023](https://arxiv.org/abs/2307.13020).
+This repository contains code for simulating and estimating Multivariate Continuous-time Autoregressive (MCAR) processes. For an overview of multivariate CAR(MA) processes, see [Marquardt and Stelzer, 2007](https://www.sciencedirect.com/science/article/pii/S0304414906000846). The estimators implemented in this repository are primarily based on the results of [Lucchese et al., 2023](https://arxiv.org/abs/2307.13020).
 
 ![CAR Realization](plots/CAR_realization.png)
 
