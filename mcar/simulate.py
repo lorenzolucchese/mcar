@@ -2,7 +2,7 @@ import numpy as np
 import scipy
 import scipy.linalg
 import scipy.stats
-from typing import Callable
+from typing import Callable, Union
 
 def reshape_array(array, d):
     if d == 1:
@@ -51,7 +51,7 @@ def grCAR_A(theta: np.ndarray, A: np.ndarray) -> np.ndarray:
     A_theta = MCAR_A(AA)
     return A_theta
 
-def simulate_MCAR_stat_distr_approx(A: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Callable[[float, float], np.ndarray] | None):
+def simulate_MCAR_stat_distr_approx(A: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Union[Callable[[float, float], np.ndarray], None]):
     """
     Simulate from stationary distribution of MCAR process by approximating integral discretely.
     :param A: MCAR structural matrix, (pd, pd) np.ndarray
@@ -77,7 +77,7 @@ def simulate_MCAR_stat_distr_approx(A: np.ndarray, a: np.ndarray, Sigma: np.ndar
     delta_L = scipy.stats.multivariate_normal(mean=a*delta_t, cov=Sigma*delta_t).rvs(size=N).T + delta_jump_L
     return np.tensordot(scipy.linalg.expm(np.tensordot(P[:-1], A, axes=0)), np.matmul(E, delta_L), axes=[[0, 2], [1, 0]])
     
-def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: scipy.stats._multivariate.multi_rv_frozen | None):
+def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Union[scipy.stats._multivariate.multi_rv_frozen, None]):
     """
     Simulate from stationary distribution of finite activity MCAR process exactly.
     :param A: MCAR structural matrix, (pd, pd) np.ndarray
@@ -120,7 +120,7 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
     x = a_component + W_component + J_component
     return x
 
-def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Callable[[float, float], np.ndarray] | None, output_format: str = 'MCAR', uniform=False):
+def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Union[Callable[[float, float], np.ndarray], None], output_format: str = 'MCAR', uniform=False):
     """
     Simulate (discrete) paths from a MCAR model with structural matrix A and driving Levy process (with finite Levy measure)
     with triplet (b, Sigma, F) using Euler-Maruyama method:
@@ -194,7 +194,7 @@ def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.nda
     else:
         raise ValueError("output_format must be one of ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']")
 
-def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: scipy.stats._multivariate.multi_rv_frozen | None, output_format: str = 'MCAR', uniform=False):
+def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Union[scipy.stats._multivariate.multi_rv_frozen, None], output_format: str = 'MCAR', uniform=False):
     """
     Simulate (discrete) paths from a MCAR model with structural matrix A and driving Levy process (with finite Levy measure)
     with triplet (a, Sigma, F).
